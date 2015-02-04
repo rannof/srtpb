@@ -1,0 +1,18 @@
+#!/bin/bash
+echo "create needed directories"
+mkdir ringserver
+mkdir ringserver/slinktool
+mkdir ringserver/dalitool
+echo "extracting tar files:"
+echo "ringserver"
+tar -C ringserver --strip-components 1 -xf ringserver-*.tar.gz
+echo "dalitool"
+tar -C ringserver/dalitool --strip-components 1 -xf dalitool-*.tar.gz
+echo "slinktool"
+tar -C ringserver/slinktool --strip-components 1 -xf slinktool-*.tar.gz
+echo "Adjusting make files of external software"
+sed -r -i 's/DIRS = pcre mxml libmseed src/DIRS = pcre mxml libmseed src dalitool slinktool/' ringserver/Makefile
+sed -i '0,/CFLAGS.\+/s//\0\nCFLAGS = -fPIC/' ringserver/lib*/Makefile
+sed -i '0,/CFLAGS.\+/s//\0\nCFLAGS = -fPIC/' ringserver/dalitool/lib*/Makefile
+make
+
