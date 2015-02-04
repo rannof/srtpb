@@ -1,12 +1,11 @@
-# srtpb  
- SRTPB: Seedlink Real-Time Playback
- A tool for simulating a real time blayback of seismic data.
+# SRTPB: Seedlink Real-Time Playback
+## A tool for simulating a real time blayback of seismic data.
   
   This code aim is to mimic a real life scenario of seismic data stream
   by resending archived seismic data to a seedlink server as in real time.
   The code reads the seismic data, slice it to small time intervals, and sends
   each slice to a seedlink server in real time, altering the start time of the
-  slice with respect to the time of the blayback such that packets arrived to 
+  slice with respect to the time of the playback such that packets arrived to 
   the server will show current real time.
   The code allows to set a parameter of latency for each station, for realistic
   situations of telemertry issues.
