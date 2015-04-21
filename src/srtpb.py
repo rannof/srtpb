@@ -32,9 +32,10 @@ from StringIO import StringIO
 import numpy as np
 import threading
 from threading import Timer
-import argparse,os,sys,textwrap
+import argparse,os,sys,textwrap,time
 
 _verbose=False
+MAXTHREADS=300 # should be higher than the number of station.channels so at each point of time all data from all stations will be sent.
 
 def getLatency(s):
   '''a argparse function for latency commandline variable
@@ -104,10 +105,22 @@ parser.add_argument('-o',metavar='options',nargs='+',help='additional optional p
 parser.add_argument('-s',metavar='seconds',type=float,help='Packet time interval in seconds. Default - 1 sec.',default=1.0)
 parser.add_argument('-l',metavar='Latency',type=getLatency,help='Latency of data. Can be one argument for all stations in seconds or a file name \
 containing a list of net.sta=X format. Default - 0.',default=0)
+parser.add_argument('-m',action='store_true',help='Modify time to current time (relative to playback start time)',default=False)
+parser.add_argument('-f',action='store_true',help='Fast replay - No delay (Not a "real time" playback)',default=False)
 parser.add_argument('-H',metavar='Host',help='Host Address (127.0.0.1)',default="127.0.0.1")
 parser.add_argument('-P',metavar='Port',help='Port Number (16000)',default="16000")
 parser.add_argument('-v',action='store_true',help='Verbose (False).',default=False)
 parser.add_argument('--test',action='store_true',help='Testing mode - no data will be sent. (False)',default=False)
+
+
+def slinkOpen(IP="127.0.0.1:16000",v=4):
+  'open seedlink data connection. Uses srtpblib c-python library'
+  if not srtpbdaliinit(IP,"SRTPB",v): sys.exit('Cannot connect to server [%s].\nExit.'%IP)
+
+def slinkClose():
+  'close seedlink data connection. Uses srtpblib c-python library'
+  srtpbdaliquit()
+
 
 def getData(filelist,starttime,endtime,**kwargs):
   '''
@@ -116,7 +129,10 @@ def getData(filelist,starttime,endtime,**kwargs):
   '''
   S = Stream()
   for f in filelist:
-    S += read(f,starttime=starttime,endtime=endtime,**kwargs)
+    try:
+      S += read(f,starttime=starttime,endtime=endtime,**kwargs)
+    except Exception,msg:
+      print >> sys.stderr,msg.args[0]
   stations = list(set([t.stats.network+'.'+t.stats.station for t in S])) # get a list of stations in NET.STA format
   if len(S)<1:
     raise ValueError,"No data could be found."
@@ -135,7 +151,7 @@ def setLatency(S,latency):
   else:
     return
 
-def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False):
+def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=False):
   '''Send a stream to the server.
   S - Stream
   PacketTimeInterval - time span of each packet to be sent
@@ -146,6 +162,64 @@ def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False):
        will be calculated from data itself if None
   Tpb - Time of playback. will be assigned as now if None
   test - setting test to true will not send the data.
+  m - alter time to current time relative to playback start time.
+
+  return:
+  timers - timer threads that send the data
+  Tpb - the Time of playback start
+  starttime - the time of first sample
+  endtime -  the time of last sample
+  '''
+  tic = UTCDateTime.utcnow()
+  if _verbose: print >> sys.stderr,'Sorting started at: %s'%tic
+  [t.stats.__setattr__('latency',latency) for t in S if not 'latency' in t.stats] # assign latencies for missing stations
+  [t.stats.__setattr__('starttime',t.stats.starttime+t.stats.latency) for t in S] # shift traces times according to latencies
+  endtime = S.sort(['endtime'])[-1].stats.endtime # get end time of data
+  elatency = S[-1].stats.latency
+  starttime = S.sort(['starttime'])[0].stats.starttime # get start time of data
+  slatency = S[0].stats.latency
+  NTI = int(np.ceil((endtime-starttime)/float(PacketTimeInterval))) # number of time intervals
+  s = Stream() # start a new stream
+  if _verbose: print >> sys.stderr,'Sorting data in packets...'
+  for i in xrange(NTI): # for each time interval
+    s += S.slice(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval) # slice the data at time interval
+  if not T0: T0 = starttime-slatency # get T0
+  if not Tpb: Tpb = UTCDateTime.utcnow() # get Tpb
+  for t in s:
+    t.stats.starttime = t.stats.starttime-t.stats.latency # shift back traces times according to latencies
+    if len(t.data)>1: t.data = t.data[:-1] # avoids overlaps of 1 sample. However, the last sample of a trace in the dataset will be lost.
+    if m:
+      dt = t.stats.starttime-T0 # time since start of data
+      t.stats.starttime = Tpb+dt # assign starttime relative to time of playback
+    t.data=t.data.astype(np.int32) # make sure data is in integers
+    #if _verbose: print >> sys.stderr,'%-27s %-15s %-27s (%f)'%(UTCDateTime.utcnow(),t.id,t.stats.starttime,t.stats.latency)
+  if _verbose: print >> sys.stderr,'Sorting done in %lf seconds'%(UTCDateTime.utcnow()-tic)
+  buff = StringIO()
+  writeMSEED(s, buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
+  buff.seek(0) # rewinde buffer
+  if not test:
+    for i in xrange(len(buff)/512):
+      if i%250==0: time.sleep(0.1)
+      T = Timer(0,delayedwrite,[buff[i*512:(i+1)*512],0,1])
+      T.start()
+  else:
+    T=None
+  return [T],Tpb,starttime-slatency,endtime-elatency
+
+
+
+def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=False):
+  '''Send a stream to the server.
+  S - Stream
+  PacketTimeInterval - time span of each packet to be sent
+                       each packet is later compressed and
+                       sent as multiple 512byte mseed packets
+  latency - latency to assign for each trace with no latency parameter
+  T0 - the desired start time of the data.
+       will be calculated from data itself if None
+  Tpb - Time of playback. will be assigned as now if None
+  test - setting test to true will not send the data.
+  m - alter time to current time relative to playback start time.
 
   return:
   timers - timer threads that send the data
@@ -154,8 +228,8 @@ def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False):
   endtime -  the time of last sample
   '''
   [t.stats.__setattr__('latency',latency) for t in S if not 'latency' in t.stats] # assign latencies for missing stations
-  endtime = S.sort(['endtime'])[-1].stats.endtime # get start time of data
-  starttime = S.sort(['starttime'])[0].stats.starttime # get end time of data
+  endtime = S.sort(['endtime'])[-1].stats.endtime # get end time of data
+  starttime = S.sort(['starttime'])[0].stats.starttime # get start time of data
   NTI = int(np.ceil((endtime-starttime)/float(PacketTimeInterval))) # number of time intervals
   s = Stream() # start a new stream
   if not T0: T0 = starttime # get T0
@@ -164,18 +238,12 @@ def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False):
   timers=[]
   for i in xrange(NTI): # for each time interval
     s=S.slice(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval) # slice the data at time interval
-    timers += [sendTrace(t,T0,Tpb,t.stats.latency+PacketTimeInterval,test=test) for t in s] # send each trace through timer thread
+    timers += [sendTrace(t,T0,Tpb,t.stats.latency+PacketTimeInterval,test=test,m=m) for t in s] # send each trace through timer thread
+    while threading.activeCount()>MAXTHREADS:
+      time.sleep(0.01)
   return timers,Tpb,starttime,endtime
 
-def slinkOpen(IP="127.0.0.1:16000",v=4):
-  'open seedlink data connection. Uses srtpblib c-python library'
-  if not srtpbdaliinit(IP,"ERTPB",v): sys.exit('Cannot connect to server [%s].\nExit.'%IP)
-
-def slinkClose():
-  'close seedlink data connection. Uses srtpblib c-python library'
-  srtpbdaliquit()
-
-def sendTrace(t,T0,Tpb,latency=0,test=False):
+def sendTrace(t,T0,Tpb,latency=0,test=False,m=False):
   '''
   Sends a trace to seedlink server.
   t- Trace
@@ -186,9 +254,11 @@ def sendTrace(t,T0,Tpb,latency=0,test=False):
              since in real life data is not sent
              until all data is available)
   test - setting to True will not send the data.
+  m - alter time to current time relative to playback start time.
   '''
-  dt = t.stats.starttime-T0 # time since start of playback
-  t.stats.starttime = Tpb+dt # assign starttime relative to time of playback
+  dt = t.stats.starttime-T0 # time since start of data
+  if m: t.stats.starttime = Tpb+dt # assign starttime relative to time of playback
+  if len(t.data)>1: t.data = t.data[:-1] # avoids overlaps of 1 sample. However, the last sample of a trace in the dataset will be lost.
   if _verbose: print >> sys.stderr,'%-27s %-15s %-27s (%f)'%(UTCDateTime.utcnow(),t.id,t.stats.starttime,t.stats.latency)
   t.data=t.data.astype(np.int32) # make sure data is in integers
   starttime=util._convertDatetimeToMSTime(t.stats.starttime) # get time stamp as seedlink likes it
@@ -218,9 +288,12 @@ def main(args):
   filelist = args.p # get the file list
   starttime,endtime = args.t # get time interval
   stations,S = getData(filelist,starttime,endtime,**args.o) # read the data
-  #S = S.slice(starttime=S.sort(['starttime'])[0].stats.starttime+60*8)
   setLatency(S,args.l) # set latencies
-  timers,Tpb,starttime0,endtime0 = sendStream(S,args.s,test=args.test) # send the stream
+  if args.f:
+    if _verbose: print >> sys.stderr,'Running in Fast mode...'
+    timers,Tpb,starttime0,endtime0 = sendStreamFast(S,args.s,test=args.test,m=args.m) # send the stream as fast as possible
+  else:
+    timers,Tpb,starttime0,endtime0 = sendStream(S,args.s,test=args.test,m=args.m) # send the stream
   if _verbose: print >> sys.stderr,'Waiting for data to be sent...'
   if not args.test: [t.join() for t in timers] # wait for threads to finish
   slinkClose() # close connection
