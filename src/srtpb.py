@@ -110,6 +110,7 @@ parser.add_argument('-f',action='store_true',help='Fast replay - No delay (Not a
 parser.add_argument('-H',metavar='Host',help='Host Address (127.0.0.1)',default="127.0.0.1")
 parser.add_argument('-P',metavar='Port',help='Port Number (16000)',default="16000")
 parser.add_argument('-v',action='store_true',help='Verbose (False).',default=False)
+parser.add_argument('-d',metavar='delay',type=float,help='Directly stream ordered file to server with delay ( in seconds) every 250 packets.',default=-1)
 parser.add_argument('--test',action='store_true',help='Testing mode - no data will be sent. (False)',default=False)
 
 
@@ -198,13 +199,11 @@ def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=Fals
   writeMSEED(s, buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
   buff.seek(0) # rewinde buffer
   if not test:
-    for i in xrange(len(buff)/512):
-      if i%250==0: time.sleep(0.1)
-      T = Timer(0,delayedwrite,[buff[i*512:(i+1)*512],0,1])
-      T.start()
-  else:
-    T=None
-  return [T],Tpb,starttime-slatency,endtime-elatency
+    if _verbose: print >> sys.stderr,'Sending data started @ %s'%UTCDateTime.utcnow()
+    for i in xrange(buff.len/512):
+      if i%250==0: time.sleep(0.1) # must slow down for ElarmS fast playback mode
+      daliwrite(buff.buf[i*512:(i+1)*512],512,0,1)
+  return [],Tpb,starttime-slatency,endtime-elatency
 
 
 
@@ -284,6 +283,7 @@ def delayedwrite(buff,starttime,endtime):
     daliwrite(buff.read(512),512,int(starttime),int(endtime))
 
 def main(args):
+  print "Start: %s"%UTCDateTime.now()
   slinkOpen(':'.join([args.H,args.P]),args.v) # open seedlink server for data connection
   filelist = args.p # get the file list
   starttime,endtime = args.t # get time interval
@@ -298,6 +298,26 @@ def main(args):
   if not args.test: [t.join() for t in timers] # wait for threads to finish
   slinkClose() # close connection
   print "Playback started at: %s\nData span: %s - %s\nDelta (sec): %s"%(Tpb,starttime0,endtime0,Tpb-starttime0)
+  print "End: %s"%UTCDateTime.now()
+
+def direct(args):
+  assert args.t==[None,None],'Error: Direct Mode cannot use time value.'
+  tic = UTCDateTime.now()
+  print "Start: %s"%tic
+  slinkOpen(':'.join([args.H,args.P]),args.v) # open seedlink server for data connection
+  filelist = args.p # get the file list
+  for file in filelist:
+    try:
+      buffer = open(file,'r').read()
+    except Exception as E:
+      print >> sys.stderr,'Error with file %s (%s)'%(file,str(E))
+      continue
+    for i in xrange(len(buffer)/512):
+      if i%250==0: time.sleep(args.d)
+      daliwrite(buffer[i*512:(i+1)*512],512,0,1)
+  toc = UTCDateTime.now()
+  print "End: %s (%lf)"%(toc,toc-tic)
+
 
 if __name__=='__main__':
     # parse the arguments
@@ -307,4 +327,7 @@ if __name__=='__main__':
     args.v=4
   else:
     args.v=0
-  main(args)
+  if not args.d>=0:
+    main(args)
+  else:
+    direct(args)
