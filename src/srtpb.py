@@ -32,10 +32,15 @@ from StringIO import StringIO
 import numpy as np
 import threading
 from threading import Timer
+import multiprocessing as mp
+from multiprocessing.pool import Pool
 import argparse,os,sys,textwrap,time
 
 _verbose=False
 MAXTHREADS=300 # should be higher than the number of station.channels so at each point of time all data from all stations will be sent.
+MAXProcs = mp.cpu_count()-1 # for multiprocessing when slicing a Stream
+if not MAXProcs: MAXProcs = 1 # make sure at least one processor is available
+Slicer = Stream() # a placeholder for multiprocessing slicer
 
 def getLatency(s):
   '''a argparse function for latency commandline variable
@@ -152,6 +157,18 @@ def setLatency(S,latency):
   else:
     return
 
+def getStreamSlice((starttime,endtime)):
+  return Slicer.slice(starttime,endtime) # slice the slicer at start-end. this is will be done in multiprocessing
+
+def StreamMultiSlice(S,starttime,PacketTimeInterval,NTI):
+  global Slicer
+  Slicer = S # assign the stream to the global slices
+  s = Stream() # init an empty Stream
+  p = Pool(processes=MAXProcs) # span pool of workers for multiprocessing
+  slices = p.map(getStreamSlice,[(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval) for i in xrange(NTI)]) # slice the data at time interval using multiprocessing
+  [s.extend(i) for i in slices] # combine slices to one stream
+  return s
+
 def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=False):
   '''Send a stream to the server.
   S - Stream
@@ -180,10 +197,8 @@ def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=Fals
   starttime = S.sort(['starttime'])[0].stats.starttime # get start time of data
   slatency = S[0].stats.latency
   NTI = int(np.ceil((endtime-starttime)/float(PacketTimeInterval))) # number of time intervals
-  s = Stream() # start a new stream
   if _verbose: print >> sys.stderr,'Sorting data in packets...'
-  for i in xrange(NTI): # for each time interval
-    s += S.slice(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval) # slice the data at time interval
+  s = StreamMultiSlice(S,starttime,PacketTimeInterval,NTI) # slice the stream to time intervals - use multithreading for speed
   if not T0: T0 = starttime-slatency # get T0
   if not Tpb: Tpb = UTCDateTime.utcnow() # get Tpb
   for t in s:
