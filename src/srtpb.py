@@ -193,17 +193,17 @@ def putSlice(Qin,L,):
     s = Qin.get()
     if s=='done.':
       run=False
-      continue  
+      continue
     buff = StringIO()
     writeMSEED(s, buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
     buff.seek(0) # rewinde buffer
     if not _test:
       for i in xrange(buff.len/512):
         if i%250==0: time.sleep(0.1) # must slow down for ElarmS fast playback mode
-        daliwrite(buff.buf[i*512:(i+1)*512],512,0,1)   
+        daliwrite(buff.buf[i*512:(i+1)*512],512,0,1)
   slinkClose()
-   
-  
+
+
 def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,m=False):
   '''Send a stream to the server.
   S - Stream
@@ -248,14 +248,14 @@ def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,m=False):
   [Qin.put(['Done.']) for i in xrange(args.n)]
   [p.join() for p in SlicerPool]
   toc = UTCDateTime.utcnow()
-  if _verbose: print >> sys.stderr,'Data sent to slicing at: %s (%lf)'%(toc,toc-tic)   
+  if _verbose: print >> sys.stderr,'Data sent to slicing at: %s (%lf)'%(toc,toc-tic)
   [Qout.put('done.') for i in xrange(3)]
   [writer.join() for writer in writers]
-  toc = UTCDateTime.utcnow()  
-  if _verbose: print >> sys.stderr,'Data sent to slink server at: %s (%lf)'%(toc,toc-tic)   
+  toc = UTCDateTime.utcnow()
+  if _verbose: print >> sys.stderr,'Data sent to slink server at: %s (%lf)'%(toc,toc-tic)
   return [],Tpb,starttime,endtime
 
-def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=False):
+def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,m=False):
   '''Send a stream to the server.
   S - Stream
   PacketTimeInterval - time span of each packet to be sent
@@ -285,7 +285,7 @@ def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=
   timers=[]
   for i in xrange(NTI): # for each time interval
     s=S.slice(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval) # slice the data at time interval
-    timers += [sendTrace(t,T0,Tpb,t.stats.latency+PacketTimeInterval,test=test,m=m) for t in s] # send each trace through timer thread
+    timers += [sendTrace(t,T0,Tpb,t.stats.latency+PacketTimeInterval,m=m) for t in s] # send each trace through timer thread
     while threading.activeCount()>MAXTHREADS:
       time.sleep(0.01)
   return timers,Tpb,starttime,endtime
@@ -300,7 +300,6 @@ def sendTrace(t,T0,Tpb,latency=0,m=False):
             (should include the packet time interval
              since in real life data is not sent
              until all data is available)
-  test - setting to True will not send the data.
   m - alter time to current time relative to playback start time.
   '''
   dt = t.stats.starttime-T0 # time since start of data
@@ -345,7 +344,7 @@ def main(args):
   if not args.test: [t.join() for t in timers] # wait for threads to finish
   if not args.f: slinkClose() # close connection
   print "Playback started at: %s\nData span: %s - %s\nDelta (sec): %s"%(Tpb,starttime0,endtime0,Tpb-starttime0)
-  
+
 
 def direct(args):
   assert args.t==[None,None],'Error: Direct Mode cannot use time value.'
@@ -388,5 +387,5 @@ if __name__=='__main__':
   else:
     direct(args)
   endRun = UTCDateTime.now()
-  print "End: %s (%lf)"%(endRun,endRun-startRun) 
+  print "End: %s (%lf)"%(endRun,endRun-startRun)
 
