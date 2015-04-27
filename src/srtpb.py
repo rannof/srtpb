@@ -33,14 +33,14 @@ import numpy as np
 import threading
 from threading import Timer
 import multiprocessing as mp
-from multiprocessing.pool import Pool
+from multiprocessing import Pool,Manager,Queue,Lock,Process
 import argparse,os,sys,textwrap,time
 
 _verbose=False
+_test=False
 MAXTHREADS=300 # should be higher than the number of station.channels so at each point of time all data from all stations will be sent.
 MAXProcs = mp.cpu_count()-1 # for multiprocessing when slicing a Stream
 if not MAXProcs: MAXProcs = 1 # make sure at least one processor is available
-Slicer = Stream() # a placeholder for multiprocessing slicer
 
 def getLatency(s):
   '''a argparse function for latency commandline variable
@@ -92,6 +92,14 @@ class getReadOptions(argparse.Action):
       raise argparse.ArgumentError(self,'Each option should be in the form "key=value" (e.g. format=MSEED')
     setattr(namespace, 'o', d) # assign dictionary to parameter o
 
+class procNum(argparse.Action):
+  '''A argparse action subclass.
+     Called if options parameters are entered at command-line
+  '''
+  def __call__(self, parser, namespace, value, option_string=None):
+    if value>MAXProcs:
+      raise argparse.ArgumentError(self,"Can't use more than the system's processors number (max - %d)"% MAXProcs)
+    setattr(namespace, 'n', value) # assign dictionary to parameter o
 
 # set the argument parser
 parser = argparse.ArgumentParser(
@@ -116,6 +124,7 @@ parser.add_argument('-H',metavar='Host',help='Host Address (127.0.0.1)',default=
 parser.add_argument('-P',metavar='Port',help='Port Number (16000)',default="16000")
 parser.add_argument('-v',action='store_true',help='Verbose (False).',default=False)
 parser.add_argument('-d',metavar='delay',type=float,help='Directly stream ordered file to server with delay ( in seconds) every 250 packets.',default=-1)
+parser.add_argument('-n',metavar='processors',type=int,help='Number of processors for fast replay',default=1,action=procNum)
 parser.add_argument('--test',action='store_true',help='Testing mode - no data will be sent. (False)',default=False)
 
 
@@ -157,19 +166,45 @@ def setLatency(S,latency):
   else:
     return
 
-def getStreamSlice((starttime,endtime)):
-  return Slicer.slice(starttime,endtime) # slice the slicer at start-end. this is will be done in multiprocessing
+def getSlice(lst,Qin,Qout,L):
+  run = True
+  while run:
+    try:
+      starttime,PacketTimeInterval,i,m,T0,Tpb = Qin.get()
+    except:
+      run=False
+      continue
+    s=lst[0].slice(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval)
+    for t in s:
+      t.stats.starttime = t.stats.starttime-t.stats.latency # shift back traces times according to latencies
+      if len(t.data)>1: t.data = t.data[:-1] # avoids overlaps of 1 sample. However, the last sample of a trace in the dataset will be lost.
+      if m:
+        dt = t.stats.starttime-T0 # time since start of data
+        t.stats.starttime = Tpb+dt # assign starttime relative to time of playback
+    Qout.put(s)
+  L.acquire()
+  if _verbose: print >> sys.stderr,'Terminating process',os.getpid()
+  L.release()
 
-def StreamMultiSlice(S,starttime,PacketTimeInterval,NTI):
-  global Slicer
-  Slicer = S # assign the stream to the global slices
-  s = Stream() # init an empty Stream
-  p = Pool(processes=MAXProcs) # span pool of workers for multiprocessing
-  slices = p.map(getStreamSlice,[(starttime+i*PacketTimeInterval,starttime+(i+1)*PacketTimeInterval) for i in xrange(NTI)]) # slice the data at time interval using multiprocessing
-  [s.extend(i) for i in slices] # combine slices to one stream
-  return s
-
-def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=False):
+def putSlice(Qin,L,):
+  slinkOpen(':'.join([args.H,args.P]),args.v) # open seedlink server for data connection
+  run = True
+  while run:
+    s = Qin.get()
+    if s=='done.':
+      run=False
+      continue  
+    buff = StringIO()
+    writeMSEED(s, buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
+    buff.seek(0) # rewinde buffer
+    if not _test:
+      for i in xrange(buff.len/512):
+        if i%250==0: time.sleep(0.1) # must slow down for ElarmS fast playback mode
+        daliwrite(buff.buf[i*512:(i+1)*512],512,0,1)   
+  slinkClose()
+   
+  
+def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,m=False):
   '''Send a stream to the server.
   S - Stream
   PacketTimeInterval - time span of each packet to be sent
@@ -182,6 +217,7 @@ def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=Fals
   test - setting test to true will not send the data.
   m - alter time to current time relative to playback start time.
 
+
   return:
   timers - timer threads that send the data
   Tpb - the Time of playback start
@@ -190,37 +226,34 @@ def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=Fals
   '''
   tic = UTCDateTime.utcnow()
   if _verbose: print >> sys.stderr,'Sorting started at: %s'%tic
+  if _verbose: print >> sys.stderr,'Sorting data in %d original packets...'%len(S)
+  S.merge()
+  S = S.split()
   [t.stats.__setattr__('latency',latency) for t in S if not 'latency' in t.stats] # assign latencies for missing stations
   [t.stats.__setattr__('starttime',t.stats.starttime+t.stats.latency) for t in S] # shift traces times according to latencies
+  for t in S:
+    t.data=t.data.astype(np.int32) # make sure data is in integers
   endtime = S.sort(['endtime'])[-1].stats.endtime # get end time of data
   elatency = S[-1].stats.latency
   starttime = S.sort(['starttime'])[0].stats.starttime # get start time of data
   slatency = S[0].stats.latency
   NTI = int(np.ceil((endtime-starttime)/float(PacketTimeInterval))) # number of time intervals
-  if _verbose: print >> sys.stderr,'Sorting data in packets...'
-  s = StreamMultiSlice(S,starttime,PacketTimeInterval,NTI) # slice the stream to time intervals - use multithreading for speed
+  if _verbose: print >> sys.stderr,'Slicing %d Traces into ~%d packets...'%(len(S),NTI*len(S))
   if not T0: T0 = starttime-slatency # get T0
   if not Tpb: Tpb = UTCDateTime.utcnow() # get Tpb
-  for t in s:
-    t.stats.starttime = t.stats.starttime-t.stats.latency # shift back traces times according to latencies
-    if len(t.data)>1: t.data = t.data[:-1] # avoids overlaps of 1 sample. However, the last sample of a trace in the dataset will be lost.
-    if m:
-      dt = t.stats.starttime-T0 # time since start of data
-      t.stats.starttime = Tpb+dt # assign starttime relative to time of playback
-    t.data=t.data.astype(np.int32) # make sure data is in integers
-    #if _verbose: print >> sys.stderr,'%-27s %-15s %-27s (%f)'%(UTCDateTime.utcnow(),t.id,t.stats.starttime,t.stats.latency)
-  if _verbose: print >> sys.stderr,'Sorting done in %lf seconds'%(UTCDateTime.utcnow()-tic)
-  buff = StringIO()
-  writeMSEED(s, buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
-  buff.seek(0) # rewinde buffer
-  if not test:
-    if _verbose: print >> sys.stderr,'Sending data started @ %s'%UTCDateTime.utcnow()
-    for i in xrange(buff.len/512):
-      if i%250==0: time.sleep(0.1) # must slow down for ElarmS fast playback mode
-      daliwrite(buff.buf[i*512:(i+1)*512],512,0,1)
-  return [],Tpb,starttime-slatency,endtime-elatency
-
-
+  # slice the stream to time intervals - use multithreading for speed
+  lst.append(S)
+  tic = UTCDateTime.utcnow()
+  [Qin.put([starttime,PacketTimeInterval,i,m,T0,Tpb]) for i in xrange(NTI)]
+  [Qin.put(['Done.']) for i in xrange(args.n)]
+  [p.join() for p in SlicerPool]
+  toc = UTCDateTime.utcnow()
+  if _verbose: print >> sys.stderr,'Data sent to slicing at: %s (%lf)'%(toc,toc-tic)   
+  [Qout.put('done.') for i in xrange(3)]
+  [writer.join() for writer in writers]
+  toc = UTCDateTime.utcnow()  
+  if _verbose: print >> sys.stderr,'Data sent to slink server at: %s (%lf)'%(toc,toc-tic)   
+  return [],Tpb,starttime,endtime
 
 def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=False):
   '''Send a stream to the server.
@@ -257,7 +290,7 @@ def sendStream(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,test=False,m=
       time.sleep(0.01)
   return timers,Tpb,starttime,endtime
 
-def sendTrace(t,T0,Tpb,latency=0,test=False,m=False):
+def sendTrace(t,T0,Tpb,latency=0,m=False):
   '''
   Sends a trace to seedlink server.
   t- Trace
@@ -280,7 +313,7 @@ def sendTrace(t,T0,Tpb,latency=0,test=False,m=False):
   buff = StringIO()
   writeMSEED(Stream(t), buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
   buff.seek(0) # rewinde buffer
-  if not test:
+  if not _test:
     # create a threaded timer calling delayedwrite function, with buffer,starttime and endtime at starttime+letancy relative to now
     T = Timer((Tpb+dt+latency)-UTCDateTime.utcnow(),delayedwrite,[buff,starttime,endtime])
     # start the thread (will start is time but might have a few hundred miliseconds delay, depending on the system)
@@ -298,27 +331,24 @@ def delayedwrite(buff,starttime,endtime):
     daliwrite(buff.read(512),512,int(starttime),int(endtime))
 
 def main(args):
-  print "Start: %s"%UTCDateTime.now()
-  slinkOpen(':'.join([args.H,args.P]),args.v) # open seedlink server for data connection
   filelist = args.p # get the file list
   starttime,endtime = args.t # get time interval
   stations,S = getData(filelist,starttime,endtime,**args.o) # read the data
   setLatency(S,args.l) # set latencies
   if args.f:
     if _verbose: print >> sys.stderr,'Running in Fast mode...'
-    timers,Tpb,starttime0,endtime0 = sendStreamFast(S,args.s,test=args.test,m=args.m) # send the stream as fast as possible
+    timers,Tpb,starttime0,endtime0 = sendStreamFast(S,args.s,m=args.m) # send the stream as fast as possible
   else:
-    timers,Tpb,starttime0,endtime0 = sendStream(S,args.s,test=args.test,m=args.m) # send the stream
+    slinkOpen(':'.join([args.H,args.P]),args.v) # open seedlink server for data connection
+    timers,Tpb,starttime0,endtime0 = sendStream(S,args.s,m=args.m) # send the stream
   if _verbose: print >> sys.stderr,'Waiting for data to be sent...'
   if not args.test: [t.join() for t in timers] # wait for threads to finish
-  slinkClose() # close connection
+  if not args.f: slinkClose() # close connection
   print "Playback started at: %s\nData span: %s - %s\nDelta (sec): %s"%(Tpb,starttime0,endtime0,Tpb-starttime0)
-  print "End: %s"%UTCDateTime.now()
+  
 
 def direct(args):
   assert args.t==[None,None],'Error: Direct Mode cannot use time value.'
-  tic = UTCDateTime.now()
-  print "Start: %s"%tic
   slinkOpen(':'.join([args.H,args.P]),args.v) # open seedlink server for data connection
   filelist = args.p # get the file list
   for file in filelist:
@@ -330,11 +360,10 @@ def direct(args):
     for i in xrange(len(buffer)/512):
       if i%250==0: time.sleep(args.d)
       daliwrite(buffer[i*512:(i+1)*512],512,0,1)
-  toc = UTCDateTime.now()
-  print "End: %s (%lf)"%(toc,toc-tic)
-
 
 if __name__=='__main__':
+  startRun = UTCDateTime.now()
+  print "Start: %s"%startRun
     # parse the arguments
   args = parser.parse_args(sys.argv[1:])
   if args.v:
@@ -342,7 +371,22 @@ if __name__=='__main__':
     args.v=4
   else:
     args.v=0
+  if args.test: _test=True
+  if args.f:
+    # multiprocessing stuff
+    if _verbose: print >> sys.stderr,'Staring %d subprocesses for fast slicing.'%args.n
+    Qin = Queue(args.n+1)
+    Qout = Queue(args.n+1)
+    L = Lock()
+    lst = Manager().list()
+    SlicerPool = [Process(target=getSlice,args=(lst,Qin,Qout,L)) for i in xrange(args.n)]
+    [p.start() for p in SlicerPool]
+    writers = [Process(target=putSlice,args=(Qout,L)) for i in xrange(3)]
+    [writer.start() for writer in writers]
   if not args.d>=0:
     main(args)
   else:
     direct(args)
+  endRun = UTCDateTime.now()
+  print "End: %s (%lf)"%(endRun,endRun-startRun) 
+
