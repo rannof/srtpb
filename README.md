@@ -107,3 +107,9 @@
   You should have received a copy of the GNU Lesser General Public License     
   along with this program.  If not, see <http://www.gnu.org/licenses/>.        
 
+# MSRTSLICE
+## A tool for preparing archived data for replays.
+
+  This C code will read mseed files and send them to a mseed output file or a datalink server.  
+  The code will slice the data to a 1 sec slices and reorgenize the data according to start time of each slice.
+  The Code can handle large amounts of data and is a pure C code. Use -h for help. It is part of the srtpb package. 
