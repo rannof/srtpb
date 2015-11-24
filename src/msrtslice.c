@@ -26,11 +26,10 @@
 // OUTPUT: a mseedfile with 1 sec slices of the data
 
 // COMPILE:
-//gcc -O2 -Wall -L../ringserver/libmseed -I../ringserver/libmseed -lmseed -lpthread msrtslice.c ../ringserver/libmseed/libmseed.a -o msrtslice -lm
-
-//rm mseedtest; gcc -O2 -Wall -L../ringserver/libmseed -I../ringserver/libmseed -lmseed -lpthread mseedtest.c ../ringserver/libmseed/libmseed.a -o mseedtest -lm ; rm output.mseed ; time mseedtest /work/work/GIIRTDATA/201505241233.mseed
+//gcc -O2 -Wall -L../ringserver/libmseed -L../ringserver/dalitool/libdali -I../ringserver/libmseed -I../ringserver/dalitool/libdali -lmseed -ldali -lpthread msrtslice.c ../ringserver/libmseed/libmseed.a ../ringserver/dalitool/libdali/libdali.a -o msrtslice -lm
 
 #include "libmseed.h"
+#include "libdali.h"
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -77,13 +76,18 @@ int compare(MSDataIndex *one,MSDataIndex *two);//compare two nodes merge sort ut
 int splitindex(); // read data according to index and split it to 1sec slices
 MSRecord *slice_msr(MSRecord *msr,hptime_t slicestart,hptime_t sliceend); // slice mseed record according to start and end times
 static int parameter_proc (int argcount, char **argvec); // process user params
-
+static void record_handler (char *record, int reclen, void *nothing); // write handler
+static void mseed_record_handler (char *record, int reclen, void *nothing); // mseed write handler
+static void dlink_record_handler (char *record, int reclen,void *nothing); // datalink write handler
+int daliinit(char *ip,char *progid); // init a dlink connection
+int daliquit(); // dlink connection close
 // VARIABLES
 int verbose = 0; // libmseed verbose level
 void log_print (char *message); // print lOG messages
 void diag_print (char *message); // print ERR messages
 char **filelist; // A list of input files
 char *outputfile=NULL; // output file name
+FILE *outfile=NULL; // output file handler
 int numoffiles=0; // counter for input files
 hptime_t SEC=HPTMODULUS; // Time slices HPTMODULE should be 1s in us units
 hptime_t mintimehp=LLONG_MAX,maxtimehp=LLONG_MIN; // minimum and maximum times of input
@@ -96,7 +100,10 @@ flag overwrite=0; // 1 overwrite output file
 MSRecord *msr=NULL; // mseed record
 MSFileParam *msfp=NULL; // mseed file parameter object
 char starttimeiso[40],endtimeiso[40];
-
+void *rechandler=NULL; // record handler, might change according to output type (file or server)
+char *IP=NULL; // seedlink server IP
+DLCP *dlconn=NULL; // datalink connection
+int keep_going=1; //
 /***************************************************************************
  * usage:
  * Print the usage message and exit.
@@ -118,10 +125,14 @@ usage (void)
      "                 -tw ~2002-08-05T14:00:00\n"
      "        the start or end time are optional, but the tilde must be present\n"
      " -a Append to output file, default is to overwrite\n"
-     " -o outfile     Specify the output file, required\n"
+     " -o outfile     Specify the output file\n"
+     " -d [IP]:[PORT] Specify datalink server IP and port. default localhost:16000\n"
+     "                Specifying only : will use default."
      "\n"
      " infile         Input Mini-SEED file(s)\n"
-     "\n");
+     "\n"
+     "Either outputfile or a datalink server IP are required\n\n");
+
 }  /* End of usage() */
 
 int main(int argc,char **argv){
@@ -257,6 +268,7 @@ int splitindex(){
   int retcode=0,nrecs=0,orecs=0,i=0,totalsecDt=0;
   hptime_t currslicestarttime=0,currsliceendtime=0; // current slice end time
   char starttimeiso[40]="";
+  int64_t packedsmaples=0;
   MSDataIndex *currnode=NULL,*laststartnode=NULL; // index aux pointers
   MSTraceGroup *mstg=NULL; // mseed trace group for each slice
   off_t fpos=0; // position in file
@@ -316,8 +328,8 @@ int splitindex(){
 	  mst_groupheal(mstg,-1,-1); // merge traces to a continues stream
 	  if (verbose>1) mst_printtracelist(mstg,1,1,1); // some info about the trace
     // Send data to output
-    orecs+=mst_writemseedgroup(mstg,outputfile,0,512,DE_STEIM2,1,0); // big endiens!
-	  // free trace list
+    orecs = mst_packgroup(mstg,record_handler,NULL,512,DE_STEIM2,1,&packedsmaples,1,verbose,NULL); // big endiens!
+    // free trace list
 	  mst_freegroup(&mstg);
   };
   if (verbose) ms_log(1,"Number of records read: %d write: %d\n",nrecs,orecs);
@@ -471,7 +483,6 @@ parameter_proc (int argcount, char **argvec)
 {
   int optind;
   char openflag[3] = "wb";
-  FILE *outfile=NULL;
   char *timewin     = 0;
   filelist = malloc((size_t)(argcount-1)*sizeof(char*));//save room for file names assuming all parameters are filenames
 
@@ -527,6 +538,9 @@ parameter_proc (int argcount, char **argvec)
       else if (strcmp (argvec[optind], "-o") == 0){
         outputfile = argvec[++optind];
       }
+      else if (strcmp (argvec[optind], "-d") == 0){
+        IP = argvec[++optind];
+      }
       else if (strncmp (argvec[optind], "-", 1) == 0 && strlen (argvec[optind]) > 1 ){
         ms_log (2, "Unknown option: %s\n", argvec[optind]);
         exit (1);
@@ -543,19 +557,21 @@ parameter_proc (int argcount, char **argvec)
       ms_log (1, "Try %s -h for usage\n", PACKAGE);
       exit (1);
   }
-  /* Make sure an outputfile was specified */
-  if ( ! outputfile ){
-    ms_log (2, "No output file was specified\n\n");
+  // make sure output file or datalink was specified
+  if ( ! outputfile && ! IP){
+    ms_log (2, "No output file or datalink server was specified\n\n");
     ms_log (1, "Try %s -h for usage\n", PACKAGE);
     exit (1);
   }
-  else if ( (outfile = fopen(outputfile, openflag)) == NULL ){
+  /* check if outputfile was specified */
+  if ( outputfile && (outfile = fopen(outputfile, openflag)) == NULL ){
     ms_log (2, "Error opening output file: %s\n", outputfile);
     exit (1);
   }
-  else{
-    fclose(outfile);
+  if ( IP && (daliinit(IP,"msrtslice")<0)){
+    exit(1);
   }
+
   /* Report the program version and other parameters*/
   if ( verbose ){
     ms_log (1, "%s version: %s\n", PACKAGE, VERSION);
@@ -567,11 +583,67 @@ parameter_proc (int argcount, char **argvec)
   return 0;
 }  /* End of parameter_proc() */
 
+static void record_handler (char *record, int reclen, void *nothing){
+  if (outfile) mseed_record_handler(record,reclen,nothing);
+  if (IP) dlink_record_handler(record,reclen,nothing);
+}
+
+// write to a mini seed file
+static void mseed_record_handler (char *record, int reclen, void *nothing) {
+  if ( fwrite(record, reclen, 1, outfile) != 1 )
+    {
+      ms_log (2, "Error writing to output file %s", outputfile);
+    }
+}
+
+// write to datalink (seedlink) server
+static void dlink_record_handler (char *record, int reclen,void *nothing){
+  char streamID[20];
+
+  if (keep_going && dl_write(dlconn,record,reclen,ms_recsrcname(record,streamID,0),0,0,0)<0)
+  {// in case of a write error
+    dl_disconnect (dlconn); // disconnect from server
+    dl_log_r (dlconn, 1, 0, "[%s] Disconnecting and trying to reconnect\n",dlconn->addr);
+    while (keep_going && dl_connect (dlconn)<0) // keep trying to reconnect
+    {
+      dl_log_r (dlconn, 1, 0, "[%s] Reconnecting in 1 min...\n",dlconn->addr);
+      sleep(60); // every minute
+    }
+    if (keep_going) dl_log_r (dlconn, 1, 0, "[%s] Server reconnected!\n",dlconn->addr);
+    else dl_log_r (dlconn, 0, 0, "[%s] USER TERM SIGNAL!\n",dlconn->addr);
+  }
+}
+
+int daliinit(char *ip,char *progid)
+{// connect to seedlink server
+  dlconn = dl_newdlcp (ip, progid);
+  dl_loginit (verbose, NULL, NULL, NULL, NULL); // change number for more logging
+  /* Connect to server */
+  if ( dl_connect (dlconn) < 0 )
+    {
+      ms_log(2, "Error connecting to server @ %s\n",ip);
+      return -1;
+    }
+  else
+    return 0;
+}
+
+int daliquit()
+{// Make sure seedlink connection is shut down
+  if ( dlconn->link != -1 )
+    dl_disconnect (dlconn);
+  if ( dlconn )
+    dl_freedlcp (dlconn);
+  return 0;
+}
 
 #ifndef WIN32
 // handle tremination signal
 static void term_handler (int sig)
 {
+ keep_going=0;
+ if (IP) daliquit(); // disconnect form seedlink server
+ if (outfile) fclose(outfile); // close mseed output file
  fprintf(stderr,"\n\tTerminated by user.\n\tExit.\n");
  exit(0);
 }
