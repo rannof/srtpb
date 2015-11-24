@@ -1,44 +1,44 @@
 # SRTPB: Seedlink Real-Time Playback
 ## A tool for simulating a real time blayback of seismic data.
   
-  This code aim is to mimic a real life scenario of seismic data stream
-  by resending archived seismic data to a seedlink server as in real time.
-  The code reads the seismic data, slice it to small time intervals, and sends
-  each slice to a seedlink server in real time, optionally altering the start time of the
-  slice with respect to the time of the playback such that packets arrived to 
-  the server will show current real time.
+  This code aim is to mimic a real life scenario of seismic data stream  
+  by resending archived seismic data to a seedlink server as in real time.  
+  The code reads the seismic data, slice it to small time intervals, and sends  
+  each slice to a seedlink server in real time, optionally altering the start time of the  
+  slice with respect to the time of the playback such that packets arrived to  
+  the server will show current real time.  
   The code allows to set a parameter of latency for each station, for realistic
-  situations of telemertry issues.
+  situations of telemertry issues.  
   Other options include sending the data in accelerated time mode or streaming
-  to a file. 
-
-
- DEPENDENCIES:
-  swig - http://www.swig.org
-  python (tested on 2.7) modules:
-   numpy - http://www.numpy.org
-   obspy - http://www.obspy.org
-  C external software (included as tar files):
-   code sould inclide software and libraries from IRIS (www.iris.edu):
-    ringserve - https://seiscode.iris.washington.edu/projects/ringserver 
-    libdali - http://ds.iris.edu/pub/programs/ringserver/dalitool-2013.280.tar.gz
+  to a file.   
+  
+  
+ DEPENDENCIES:  
+  swig - http://www.swig.org  
+  python (tested on 2.7) modules:  
+   numpy - http://www.numpy.org  
+   obspy - http://www.obspy.org  
+  C external software (included as tar files):  
+   code sould inclide software and libraries from IRIS (www.iris.edu):  
+    ringserve - https://seiscode.iris.washington.edu/projects/ringserver  
+    libdali - http://ds.iris.edu/pub/programs/ringserver/dalitool-2013.280.tar.gz  
     slinktool - http://ds.iris.edu/ds/nodes/dmc/software/downloads/slinktool  
    
- INSTALL:
-  on terminal at main directory, run:
-   INSTALL
-  final codes need will be located in bin directory wich can than be moved.
+ INSTALL:  
+  on terminal at main directory, run:  
+   INSTALL  
+  final codes need will be located in bin directory wich can than be moved.  
  
- RUNNING:
-   once you have you waveform files ready, run:
-     ringserver ring.conf
-   this will start a seedlink server to connect to for getting the packets.
-   Start the playback:
-     srtpb.py [commandline options]
-   on a separate terminal you can use slinktool to see the packets arrive:
-     slinktool -p localhost
-   and program that needs to get the waveforms can connect to the ringserver.
-   see ringserver documentations for additional help.
+ RUNNING:  
+   once you have you waveform files ready, run:  
+     ringserver ring.conf  
+   this will start a seedlink server to connect to for getting the packets.  
+   Start the playback:  
+     srtpb.py [commandline options]  
+   on a separate terminal you can use slinktool to see the packets arrive:  
+     slinktool -p localhost  
+   and program that needs to get the waveforms can connect to the ringserver.  
+   see ringserver documentations for additional help.  
    
  USAGE:
    srtpb.py [-h] [-t Start [END]] [-o options [options ...]]
