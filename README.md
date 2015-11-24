@@ -4,12 +4,13 @@
   This code aim is to mimic a real life scenario of seismic data stream
   by resending archived seismic data to a seedlink server as in real time.
   The code reads the seismic data, slice it to small time intervals, and sends
-  each slice to a seedlink server in real time, altering the start time of the
+  each slice to a seedlink server in real time, optionally altering the start time of the
   slice with respect to the time of the playback such that packets arrived to 
   the server will show current real time.
   The code allows to set a parameter of latency for each station, for realistic
   situations of telemertry issues.
-  
+  Other options include sending the data in accelerated time mode or streaming
+  to a file. 
 
 
  DEPENDENCIES:

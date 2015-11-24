@@ -551,7 +551,7 @@ parameter_proc (int argcount, char **argvec)
       }
   }
   /* Make sure an inputfile was specified */
-  if ( ! filelist ){
+  if ( ! *filelist ){
       ms_log (2, "No input file(s) specified\n\n");
       ms_log (1, "%s version %s\n\n", PACKAGE, VERSION);
       ms_log (1, "Try %s -h for usage\n", PACKAGE);
@@ -617,7 +617,7 @@ static void dlink_record_handler (char *record, int reclen,void *nothing){
 int daliinit(char *ip,char *progid)
 {// connect to seedlink server
   dlconn = dl_newdlcp (ip, progid);
-  dl_loginit (verbose, NULL, NULL, NULL, NULL); // change number for more logging
+  dl_loginit (verbose>=1? verbose-1 : 0, NULL, NULL, NULL, NULL); // change number for more logging
   /* Connect to server */
   if ( dl_connect (dlconn) < 0 )
     {

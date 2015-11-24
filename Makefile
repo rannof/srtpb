@@ -25,4 +25,4 @@ mkbin:
 	@mkdir -p bin/
 	@mkdir -p bin/ring
 	@mkdir -p bin/segments
-	@cp src/*.py src/*.so ringserver/ringserver src/ring.conf ringserver/dalitool/dalitool ringserver/slinktool/slinktool bin
+	@cp src/*.py src/*.so src/msrtslice ringserver/ringserver src/ring.conf ringserver/dalitool/dalitool ringserver/slinktool/slinktool bin
