@@ -26,8 +26,8 @@
 # srtpblib is a C library wrapped by swig for python use. must be compiled before use.
 from srtpblib import srtpb_record_handler_slink as daliwrite
 from srtpblib import *
-from obspy.mseed.core import *
-from obspy import read
+from obspy.io.mseed.core import _write_mseed as writeMSEED
+from obspy import read,UTCDateTime,Stream
 from StringIO import StringIO
 import numpy as np
 import threading
@@ -320,8 +320,8 @@ def sendTrace(t,T0,Tpb,latency=0,m=False):
   if len(t.data)>1: t.data = t.data[:-1] # avoids overlaps of 1 sample. However, the last sample of a trace in the dataset will be lost.
   if _verbose: print >> sys.stderr,'%-27s %-15s %-27s (%f)'%(UTCDateTime.utcnow(),t.id,t.stats.starttime,t.stats.latency)
   t.data=t.data.astype(np.int32) # make sure data is in integers
-  starttime=util._convertDatetimeToMSTime(t.stats.starttime) # get time stamp as seedlink likes it
-  endtime=util._convertDatetimeToMSTime(t.stats.endtime)# get time stamp as seedlink likes it
+  starttime=int(t.stats.starttime.timestamp*1e6) # get time stamp as seedlink likes it
+  endtime=int(t.stats.endtime.timestamp*1e6)# get time stamp as seedlink likes it
   buff = StringIO()
   writeMSEED(Stream(t), buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
   buff.seek(0) # rewinde buffer
