@@ -8,7 +8,7 @@ LIBDALI  = -ldali
 srtpbX = srtpb
 sysswig := $(shell which swig)
 
-all: srtpb, msrtslice
+all: srtpb msrtslice
 
 srtpb:
 ifeq (swig,$(findstring swig,$(sysswig)))
