@@ -200,7 +200,7 @@ def putSlice(Qin,L,):
   if _verbose: print >> sys.stderr,'Writting %d records'%(d)
   L.release()
   buff = StringIO()
-  writeMSEED(S, buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
+  writeMSEED(S, buff,reclen=512) # write 512byte packets of mseed (from obspy.mseed.core) to buffer
   buff.seek(0) # rewinde buffer
   tic = UTCDateTime.now()
   L.acquire()
@@ -323,7 +323,7 @@ def sendTrace(t,T0,Tpb,latency=0,m=False):
   starttime=int(t.stats.starttime.timestamp*1e6) # get time stamp as seedlink likes it
   endtime=int(t.stats.endtime.timestamp*1e6)# get time stamp as seedlink likes it
   buff = StringIO()
-  writeMSEED(Stream(t), buff,11,512) # write 512byte packets of mseed at STEIM2 compression (from obspy.mseed.core) to buffer
+  writeMSEED(Stream(t), buff,reclen=512) # write 512byte packets of mseed (from obspy.mseed.core) to buffer
   buff.seek(0) # rewinde buffer
   if not _test:
     # create a threaded timer calling delayedwrite function, with buffer,starttime and endtime at starttime+letancy relative to now
