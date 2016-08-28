@@ -244,8 +244,8 @@ def sendStreamFast(S,PacketTimeInterval=1.0,latency=0,T0=None,Tpb=None,m=False):
   S = S.split()
   [t.stats.__setattr__('latency',latency) for t in S if not 'latency' in t.stats] # assign latencies for missing stations
   [t.stats.__setattr__('starttime',t.stats.starttime+t.stats.latency) for t in S] # shift traces times according to latencies
-  for t in S:
-    t.data=t.data.astype(np.int32) # make sure data is in integers
+  #for t in S:
+  #  t.data=t.data.astype(np.int32) # make sure data is in integers
   endtime = S.sort(['endtime'])[-1].stats.endtime # get end time of data
   elatency = S[-1].stats.latency
   starttime = S.sort(['starttime'])[0].stats.starttime # get start time of data
@@ -319,7 +319,7 @@ def sendTrace(t,T0,Tpb,latency=0,m=False):
   if m: t.stats.starttime = Tpb+dt # assign starttime relative to time of playback
   if len(t.data)>1: t.data = t.data[:-1] # avoids overlaps of 1 sample. However, the last sample of a trace in the dataset will be lost.
   if _verbose: print >> sys.stderr,'%-27s %-15s %-27s (%f)'%(UTCDateTime.utcnow(),t.id,t.stats.starttime,t.stats.latency)
-  t.data=t.data.astype(np.int32) # make sure data is in integers
+  #t.data=t.data.astype(np.int32) # make sure data is in integers
   starttime=int(t.stats.starttime.timestamp*1e6) # get time stamp as seedlink likes it
   endtime=int(t.stats.endtime.timestamp*1e6)# get time stamp as seedlink likes it
   buff = StringIO()
