@@ -7,18 +7,14 @@
   each slice to a seedlink server in real time, optionally altering the start time of the  
   slice with respect to the time of the playback such that packets arrived to  
   the server will show current real time.  
-<<<<<<< HEAD
   The code allows to set a parameter of latency for each station, for realistic
   situations of telemertry issues.  
   Other options include sending the data in accelerated time mode or streaming
   to a file.   
-=======
   The code allows to set a parameter of latency for each station, for realistic  
   situations of telemertry issues.  
   Other options include sending the data in accelerated time mode or streaming
   to a file.  
->>>>>>> 2357f9e3de5336adaeec8bbc6f6658b1e10d25c0
-  
   
  DEPENDENCIES:  
   swig - http://www.swig.org  
@@ -27,21 +23,17 @@
    obspy - http://www.obspy.org  
   C external software (included as tar files):  
    code sould inclide software and libraries from IRIS (www.iris.edu):  
-<<<<<<< HEAD
     ringserve - https://seiscode.iris.washington.edu/projects/ringserver  
     libdali - http://ds.iris.edu/pub/programs/ringserver/dalitool-2013.280.tar.gz  
     slinktool - http://ds.iris.edu/ds/nodes/dmc/software/downloads/slinktool  
-=======
     ringserve - https://seiscode.iris.washington.edu/projects/ringserver   
     libdali - http://ds.iris.edu/pub/programs/ringserver/dalitool-2013.280.tar.gz  
     slinktool - http://ds.iris.edu/ds/nodes/dmc/software/downloads/slinktool    
->>>>>>> 2357f9e3de5336adaeec8bbc6f6658b1e10d25c0
    
  INSTALL:  
   on terminal at main directory, run:  
    INSTALL  
   final codes need will be located in bin directory wich can than be moved.  
-<<<<<<< HEAD
  
  RUNNING:  
    once you have you waveform files ready, run:  
@@ -53,8 +45,6 @@
      slinktool -p localhost  
    and program that needs to get the waveforms can connect to the ringserver.  
    see ringserver documentations for additional help.  
-=======
->>>>>>> 2357f9e3de5336adaeec8bbc6f6658b1e10d25c0
    
  RUNNING:  
    once you have you waveform files ready, run:  
